@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AdBase — Ads Tracker OS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['"DM Sans"', 'system-ui', 'sans-serif'] },
+          colors: {
+            meta: '#0668E1',
+            tiktok: '#010101',
+            tiktokacc: '#FE2C55',
+            sidebar: '#0f172a',
+            sidehovr: '#1e293b',
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'DM Sans', system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .kanban-card { cursor: grab; }
+    .kanban-card:active { cursor: grabbing; }
+    .drag-over { border: 2px dashed #3b82f6 !important; background: #eff6ff !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-type="module">
+    const { useState, useEffect, useReducer, createContext, useContext, useRef, useMemo, useCallback } = React;
+    const { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } = Recharts;
+
+    // ─── Helpers ───
+    const uid = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+    const MONTHS_SV = ['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
+    const DAYS_SV = ['Mån','Tis','Ons','Tor','Fre','Lör','Sön'];
+
+    const fmtDateSv = (d) => {
+      if (!d) return '—';
+      const dt = new Date(d);
+      return `${dt.getDate()} ${MONTHS_SV[dt.getMonth()]} ${dt.getFullYear()}`;
+    };
+
+    const fmtSEK = (n) => {
+      if (n == null) return '0 SEK';
+      return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' SEK';
+    };
+
+    const fmtInputDate = (d) => {
+      if (!d) return '';
+      const dt = new Date(d);
+      return dt.toISOString().split('T')[0];
+    };
+
+    const STATUSES = ['Draft','Scheduled','Active','Paused','Completed'];
+    const PLATFORMS = ['Meta','TikTok'];
+    const CREATIVE_TYPES = ['Video','Image','Carousel'];
+    const BUDGET_TYPES = ['daily','total'];
+
+    const STATUS_COLORS = {
+      Draft: { bg: 'bg-gray-100', text: 'text-gray-600', dot: 'bg-gray-400', hex: '#9ca3af' },
+      Scheduled: { bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500', hex: '#3b82f6' },
+      Active: { bg: 'bg-green-100', text: 'text-green-700', dot: 'bg-green-500', hex: '#22c55e' },
+      Paused: { bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500', hex: '#f59e0b' },
+      Completed: { bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400', hex: '#64748b' },
+    };
+
+    const CLIENT_COLORS = ['#6366f1','#ec4899','#f97316','#14b8a6','#8b5cf6','#ef4444','#06b6d4','#84cc16'];
+
+    // ─── Icons (inline SVG) ───
+    const Icons = {
+      Dashboard: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
+      Ads: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
+      Calendar: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+      Clients: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+      Plus: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+      Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+      ChevLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
+      ChevRight: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
+      Trash: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+      X: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+      Table: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>,
+      Kanban: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="15" rx="1"/></svg>,
+      Filter: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>,
+      Sort: () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5h10"/><path d="M11 9h7"/><path d="M11 13h4"/><path d="m3 17 4 4 4-4"/><path d="M7 3v18"/></svg>,
+      Edit: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+      TrendUp: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+      DollarSign: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+      ArrowBack: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+    };
+
+    // ─── Seed Data ───
+    const createSeedData = () => {
+      const ads = [
+        { clientName: "Bram's Burgers", adName: "Fredagsdeal – 2 för 1", platform: "Meta", status: "Active", scheduledDate: "2026-01-15", endDate: "2026-02-15", budgetType: "daily", budgetAmount: 500, creativeType: "Image", notes: "Kampanj för fredagslunch. Målgrupp: 18-35 i Uppsala." },
+        { clientName: "Bram's Burgers", adName: "Ny meny launch", platform: "Meta", status: "Completed", scheduledDate: "2026-01-08", endDate: "2026-01-22", budgetType: "total", budgetAmount: 8000, creativeType: "Video", notes: "Videokampanj för nya menyn. UGC-stil." },
+        { clientName: "Bram's Burgers", adName: "Valentine's Special", platform: "TikTok", status: "Active", scheduledDate: "2026-02-10", endDate: "2026-02-16", budgetType: "total", budgetAmount: 5000, creativeType: "Video", notes: "Par-deal för alla hjärtans dag." },
+        { clientName: "Bram's Burgers", adName: "Sommar-special TikTok", platform: "TikTok", status: "Scheduled", scheduledDate: "2026-04-01", endDate: "2026-04-30", budgetType: "daily", budgetAmount: 300, creativeType: "Video", notes: "Sommarkampanj med influencer-samarbete." },
+        { clientName: "Bram's Burgers", adName: "Lunchkampanj Mars", platform: "Meta", status: "Active", scheduledDate: "2026-03-01", endDate: "2026-03-31", budgetType: "total", budgetAmount: 6000, creativeType: "Carousel", notes: "Karusell med alla lunchrätter." },
+        { clientName: "Bram's Burgers", adName: "Grand Opening Uppsala", platform: "Meta", status: "Draft", scheduledDate: "2026-04-15", endDate: null, budgetType: "total", budgetAmount: 15000, creativeType: "Video", notes: "Stor kampanj för nya restaurangen." },
+        { clientName: "Bram's Burgers", adName: "Retargeting – webbbesökare", platform: "Meta", status: "Paused", scheduledDate: "2026-02-01", endDate: "2026-03-01", budgetType: "daily", budgetAmount: 200, creativeType: "Image", notes: "Retargeting-kampanj. Pausad pga budget." },
+        { clientName: "Bram's Burgers", adName: "TikTok Behind the Grill", platform: "TikTok", status: "Completed", scheduledDate: "2026-01-20", endDate: "2026-02-05", budgetType: "total", budgetAmount: 3500, creativeType: "Video", notes: "Bakom kulisserna-innehåll." },
+        { clientName: "Kebab Dudes", adName: "Kebab Fredag Kampanj", platform: "Meta", status: "Active", scheduledDate: "2026-02-01", endDate: "2026-03-15", budgetType: "daily", budgetAmount: 400, creativeType: "Video", notes: "Fredagskampanj med specialerbjudande." },
+        { clientName: "Kebab Dudes", adName: "TikTok Taste Test", platform: "TikTok", status: "Active", scheduledDate: "2026-02-15", endDate: "2026-03-15", budgetType: "total", budgetAmount: 7000, creativeType: "Video", notes: "Blindtest-format med kunder." },
+        { clientName: "Kebab Dudes", adName: "Lunch Deal Awareness", platform: "Meta", status: "Active", scheduledDate: "2026-03-01", endDate: "2026-03-31", budgetType: "total", budgetAmount: 4500, creativeType: "Carousel", notes: "Fokus på lunchmeny med 3 rätter." },
+        { clientName: "Kebab Dudes", adName: "Catering Promo", platform: "Meta", status: "Scheduled", scheduledDate: "2026-04-01", endDate: "2026-04-30", budgetType: "total", budgetAmount: 3000, creativeType: "Image", notes: "Ny cateringtjänst – B2B-fokus." },
+        { clientName: "Kebab Dudes", adName: "Weekend Vibes TikTok", platform: "TikTok", status: "Active", scheduledDate: "2026-03-10", endDate: "2026-04-10", budgetType: "daily", budgetAmount: 250, creativeType: "Video", notes: "Helgstämning med musik och mat." },
+        { clientName: "White Rice Asian Kitchen", adName: "Ny Ramen Lansering", platform: "Meta", status: "Scheduled", scheduledDate: "2026-03-20", endDate: "2026-04-20", budgetType: "total", budgetAmount: 9000, creativeType: "Video", notes: "Lansering av ny ramen-meny." },
+        { clientName: "White Rice Asian Kitchen", adName: "Sushi Torsdag", platform: "Meta", status: "Active", scheduledDate: "2026-02-20", endDate: "2026-03-20", budgetType: "daily", budgetAmount: 350, creativeType: "Image", notes: "Torsdagskampanj – halva priset sushi." },
+        { clientName: "White Rice Asian Kitchen", adName: "TikTok Matlagning Live", platform: "TikTok", status: "Scheduled", scheduledDate: "2026-04-05", endDate: "2026-04-15", budgetType: "total", budgetAmount: 4000, creativeType: "Video", notes: "Live cooking-event på TikTok." },
+        { clientName: "White Rice Asian Kitchen", adName: "Takeaway Push", platform: "Meta", status: "Draft", scheduledDate: "2026-04-10", endDate: null, budgetType: "total", budgetAmount: 2500, creativeType: "Carousel", notes: "Fokus på takeaway-beställningar." },
+        { clientName: "Dripp'n Burgers", adName: "Dripp'n Launch Campaign", platform: "Meta", status: "Active", scheduledDate: "2026-03-01", endDate: "2026-03-31", budgetType: "total", budgetAmount: 12000, creativeType: "Video", notes: "Stor launch-kampanj för nya restaurangen." },
+        { clientName: "Dripp'n Burgers", adName: "TikTok Burger Challenge", platform: "TikTok", status: "Draft", scheduledDate: "2026-04-01", endDate: null, budgetType: "total", budgetAmount: 5000, creativeType: "Video", notes: "Challenge-format – ät störst burgare." },
+        { clientName: "Dripp'n Burgers", adName: "Instagram Stories Teaser", platform: "Meta", status: "Active", scheduledDate: "2026-02-25", endDate: "2026-03-10", budgetType: "daily", budgetAmount: 300, creativeType: "Image", notes: "Teaser-kampanj inför öppning." },
+      ];
+      return ads.map(a => ({
+        ...a,
+        id: uid(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+    };
+
+    // ─── State Management ───
+    const STORAGE_KEY = 'adbase_ads';
+
+    const loadAds = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) { const parsed = JSON.parse(raw); if (parsed.length > 0) return parsed; }
+      } catch(e) {}
+      const seed = createSeedData();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
+      return seed;
+    };
+
+    const saveAds = (ads) => localStorage.setItem(STORAGE_KEY, JSON.stringify(ads));
+
+    function adsReducer(state, action) {
+      let next;
+      switch(action.type) {
+        case 'ADD':
+          next = [...state, { ...action.payload, id: uid(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+          break;
+        case 'UPDATE':
+          next = state.map(a => a.id === action.payload.id ? { ...a, ...action.payload, updatedAt: new Date().toISOString() } : a);
+          break;
+        case 'DELETE':
+          next = state.filter(a => a.id !== action.payload);
+          break;
+        case 'UPDATE_STATUS':
+          next = state.map(a => a.id === action.payload.id ? { ...a, status: action.payload.status, updatedAt: new Date().toISOString() } : a);
+          break;
+        default: return state;
+      }
+      saveAds(next);
+      return next;
+    }
+
+    const AppContext = createContext();
+
+    function AppProvider({ children }) {
+      const [ads, dispatch] = useReducer(adsReducer, null, loadAds);
+      const [page, setPage] = useState('dashboard');
+      const [clientFilter, setClientFilter] = useState('all');
+      const [dateRange, setDateRange] = useState({ start: '2026-01-01', end: '2026-04-30' });
+      const [modalAd, setModalAd] = useState(null); // null = closed, {} = new, {id:...} = edit
+      const [selectedClient, setSelectedClient] = useState(null); // for client detail view
+
+      const clients = useMemo(() => [...new Set(ads.map(a => a.clientName))].sort(), [ads]);
+
+      const filteredAds = useMemo(() => {
+        let result = ads;
+        if (clientFilter !== 'all') result = result.filter(a => a.clientName === clientFilter);
+        if (dateRange.start && dateRange.end) {
+          const s = new Date(dateRange.start);
+          const e = new Date(dateRange.end);
+          e.setHours(23,59,59);
+          result = result.filter(a => {
+            const sd = new Date(a.scheduledDate);
+            return sd >= s && sd <= e;
+          });
+        }
+        return result;
+      }, [ads, clientFilter, dateRange]);
+
+      const value = { ads, dispatch, page, setPage, clientFilter, setClientFilter, dateRange, setDateRange, modalAd, setModalAd, clients, filteredAds, selectedClient, setSelectedClient };
+      return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+    }
+
+    const useApp = () => useContext(AppContext);
+
+    // ─── Platform Badge ───
+    function PlatformBadge({ platform }) {
+      if (platform === 'Meta') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-white" style={{background:'#0668E1'}}>Meta</span>;
+      return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-white" style={{background:'#010101'}}>TikTok</span>;
+    }
+
+    // ─── Status Badge ───
+    function StatusBadge({ status, onClick }) {
+      const c = STATUS_COLORS[status];
+      return <span onClick={onClick} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${c.bg} ${c.text} ${onClick ? 'cursor-pointer hover:opacity-80' : ''}`}><span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}/>{status}</span>;
+    }
+
+    // ─── Status Dropdown ───
+    function StatusDropdown({ currentStatus, onSelect, onClose }) {
+      return (
+        <div className="absolute z-50 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[140px]">
+          {STATUSES.map(s => (
+            <button key={s} onClick={() => { onSelect(s); onClose(); }} className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${s === currentStatus ? 'font-semibold' : ''}`}>
+              <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].dot}`}/>{s}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Ad Modal ───
+    function AdModal() {
+      const { modalAd, setModalAd, dispatch, clients } = useApp();
+      const isEdit = modalAd && modalAd.id;
+      const [form, setForm] = useState({
+        clientName: '', adName: '', platform: 'Meta', status: 'Draft',
+        scheduledDate: '', endDate: '', budgetType: 'total', budgetAmount: '',
+        creativeType: 'Video', notes: ''
+      });
+      const [confirmDelete, setConfirmDelete] = useState(false);
+
+      useEffect(() => {
+        if (modalAd && modalAd.id) {
+          setForm({
+            clientName: modalAd.clientName || '',
+            adName: modalAd.adName || '',
+            platform: modalAd.platform || 'Meta',
+            status: modalAd.status || 'Draft',
+            scheduledDate: fmtInputDate(modalAd.scheduledDate) || '',
+            endDate: fmtInputDate(modalAd.endDate) || '',
+            budgetType: modalAd.budgetType || 'total',
+            budgetAmount: modalAd.budgetAmount || '',
+            creativeType: modalAd.creativeType || 'Video',
+            notes: modalAd.notes || '',
+          });
+        } else {
+          setForm({ clientName: '', adName: '', platform: 'Meta', status: 'Draft', scheduledDate: '', endDate: '', budgetType: 'total', budgetAmount: '', creativeType: 'Video', notes: '' });
+        }
+        setConfirmDelete(false);
+      }, [modalAd]);
+
+      if (!modalAd && modalAd !== false) return null;
+      if (modalAd === null) return null;
+
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      const handleSave = () => {
+        if (!form.clientName.trim() || !form.adName.trim() || !form.scheduledDate) return;
+        const payload = { ...form, budgetAmount: Number(form.budgetAmount) || 0 };
+        if (isEdit) dispatch({ type: 'UPDATE', payload: { ...payload, id: modalAd.id } });
+        else dispatch({ type: 'ADD', payload });
+        setModalAd(null);
+      };
+
+      const handleDelete = () => {
+        dispatch({ type: 'DELETE', payload: modalAd.id });
+        setModalAd(null);
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setModalAd(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">{isEdit ? 'Redigera annons' : 'Ny annons'}</h2>
+              <button onClick={() => setModalAd(null)} className="p-1 hover:bg-gray-100 rounded-lg transition"><Icons.X /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Client */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Klient</label>
+                <input list="client-list" value={form.clientName} onChange={e => set('clientName', e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Välj eller skriv ny klient..." />
+                <datalist id="client-list">{clients.map(c => <option key={c} value={c} />)}</datalist>
+              </div>
+              {/* Ad Name */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Annonsnamn</label>
+                <input value={form.adName} onChange={e => set('adName', e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="T.ex. Fredagsdeal – 2 för 1" />
+              </div>
+              {/* Platform + Status */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Plattform</label>
+                  <div className="flex gap-2">
+                    {PLATFORMS.map(p => (
+                      <button key={p} onClick={() => set('platform', p)} className={`flex-1 py-2 rounded-lg text-sm font-medium border-2 transition ${form.platform === p ? (p === 'Meta' ? 'border-meta bg-blue-50 text-meta' : 'border-tiktok bg-gray-50 text-tiktok') : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>{p}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <select value={form.status} onChange={e => set('status', e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Startdatum</label>
+                  <input type="date" value={form.scheduledDate} onChange={e => set('scheduledDate', e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Slutdatum</label>
+                  <input type="date" value={form.endDate} onChange={e => set('endDate', e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                </div>
+              </div>
+              {/* Budget */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Budgettyp</label>
+                  <div className="flex gap-2">
+                    {BUDGET_TYPES.map(bt => (
+                      <button key={bt} onClick={() => set('budgetType', bt)} className={`flex-1 py-2 rounded-lg text-sm font-medium border-2 transition ${form.budgetType === bt ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>{bt === 'daily' ? 'Daglig' : 'Total'}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Budget (SEK)</label>
+                  <input type="number" value={form.budgetAmount} onChange={e => set('budgetAmount', e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="0" />
+                </div>
+              </div>
+              {/* Creative Type */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kreativt format</label>
+                <div className="flex gap-2">
+                  {CREATIVE_TYPES.map(ct => (
+                    <button key={ct} onClick={() => set('creativeType', ct)} className={`flex-1 py-2 rounded-lg text-sm font-medium border-2 transition ${form.creativeType === ct ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>{ct}</button>
+                  ))}
+                </div>
+              </div>
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Anteckningar</label>
+                <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none" placeholder="Fritext..." />
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-5 border-t border-gray-100">
+              <div>
+                {isEdit && !confirmDelete && <button onClick={() => setConfirmDelete(true)} className="text-red-500 hover:text-red-700 text-sm font-medium flex items-center gap-1"><Icons.Trash /> Ta bort</button>}
+                {isEdit && confirmDelete && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-red-600">Är du säker?</span>
+                    <button onClick={handleDelete} className="px-3 py-1 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600">Ja, ta bort</button>
+                    <button onClick={() => setConfirmDelete(false)} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200">Avbryt</button>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setModalAd(null)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition">Avbryt</button>
+                <button onClick={handleSave} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">Spara</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Sidebar ───
+    function Sidebar() {
+      const { page, setPage, clientFilter, setClientFilter, clients, setModalAd, setSelectedClient } = useApp();
+      const navItems = [
+        { id: 'dashboard', label: 'Dashboard', icon: Icons.Dashboard },
+        { id: 'ads', label: 'Alla annonser', icon: Icons.Ads },
+        { id: 'calendar', label: 'Kalender', icon: Icons.Calendar },
+        { id: 'clients', label: 'Klienter', icon: Icons.Clients },
+      ];
+      return (
+        <aside className="w-60 bg-sidebar text-white flex flex-col h-screen fixed left-0 top-0 z-40">
+          <div className="p-5 border-b border-white/10">
+            <h1 className="text-xl font-bold tracking-tight">AdBase</h1>
+            <p className="text-xs text-slate-400 mt-0.5">Ads Tracker OS</p>
+          </div>
+          <div className="p-3">
+            <button onClick={() => setModalAd({})} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-lg transition">
+              <Icons.Plus /> Ny annons
+            </button>
+          </div>
+          <nav className="flex-1 px-3 py-1">
+            {navItems.map(item => (
+              <button key={item.id} onClick={() => { setPage(item.id); setSelectedClient(null); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium mb-0.5 transition ${page === item.id ? 'bg-sidehovr text-white' : 'text-slate-300 hover:bg-sidehovr hover:text-white'}`}>
+                <item.icon />{item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="p-3 border-t border-white/10">
+            <label className="text-xs text-slate-400 font-medium mb-1.5 block">Filtrera klient</label>
+            <select value={clientFilter} onChange={e => setClientFilter(e.target.value)} className="w-full bg-sidehovr border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="all">Alla klienter</option>
+              {clients.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </aside>
+      );
+    }
+
+    // ─── Dashboard ───
+    function Dashboard() {
+      const { filteredAds, dateRange, setDateRange, clients, setPage, setSelectedClient, setClientFilter } = useApp();
+
+      const stats = useMemo(() => {
+        const active = filteredAds.filter(a => a.status === 'Active').length;
+        const totalBudget = filteredAds.reduce((s, a) => s + (a.budgetAmount || 0), 0);
+        const metaCount = filteredAds.filter(a => a.platform === 'Meta').length;
+        const tiktokCount = filteredAds.filter(a => a.platform === 'TikTok').length;
+        const byStatus = STATUSES.map(s => ({ name: s, value: filteredAds.filter(a => a.status === s).length })).filter(s => s.value > 0);
+        return { active, totalBudget, metaCount, tiktokCount, total: filteredAds.length, byStatus };
+      }, [filteredAds]);
+
+      const clientSummary = useMemo(() => {
+        return clients.map(c => {
+          const cAds = filteredAds.filter(a => a.clientName === c);
+          return {
+            name: c,
+            total: cAds.length,
+            active: cAds.filter(a => a.status === 'Active').length,
+            budget: cAds.reduce((s, a) => s + (a.budgetAmount || 0), 0),
+            meta: cAds.filter(a => a.platform === 'Meta').length,
+            tiktok: cAds.filter(a => a.platform === 'TikTok').length,
+          };
+        }).filter(c => c.total > 0);
+      }, [filteredAds, clients]);
+
+      const PRESET_RANGES = [
+        { label: 'Denna månad', start: new Date(2026, new Date().getMonth(), 1).toISOString().split('T')[0], end: new Date(2026, new Date().getMonth() + 1, 0).toISOString().split('T')[0] },
+        { label: 'Jan–Feb 2026', start: '2026-01-01', end: '2026-02-28' },
+        { label: 'Mar–Apr 2026', start: '2026-03-01', end: '2026-04-30' },
+        { label: 'Alla (Jan–Apr)', start: '2026-01-01', end: '2026-04-30' },
+      ];
+
+      const PIE_COLORS = ['#0668E1', '#010101'];
+
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
+              <p className="text-sm text-gray-500 mt-1">Visar annonser från {fmtDateSv(dateRange.start)} till {fmtDateSv(dateRange.end)} — Total budget: {fmtSEK(stats.totalBudget)}</p>
+            </div>
+          </div>
+
+          {/* Date Range */}
+          <div className="flex flex-wrap items-center gap-2 bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+            <span className="text-sm font-medium text-gray-700 mr-2">Datumintervall:</span>
+            {PRESET_RANGES.map(pr => (
+              <button key={pr.label} onClick={() => setDateRange({ start: pr.start, end: pr.end })} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${dateRange.start === pr.start && dateRange.end === pr.end ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{pr.label}</button>
+            ))}
+            <div className="flex items-center gap-2 ml-auto">
+              <input type="date" value={dateRange.start} onChange={e => setDateRange(d => ({...d, start: e.target.value}))} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+              <span className="text-gray-400">→</span>
+              <input type="date" value={dateRange.end} onChange={e => setDateRange(d => ({...d, end: e.target.value}))} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+            </div>
+          </div>
+
+          {/* Summary Cards */}
+          <div className="grid grid-cols-4 gap-4">
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-500">Totalt annonser</span>
+                <span className="p-2 bg-blue-50 rounded-lg text-blue-600"><Icons.Ads /></span>
+              </div>
+              <p className="text-3xl font-bold text-gray-900">{stats.total}</p>
+            </div>
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-500">Aktiva annonser</span>
+                <span className="p-2 bg-green-50 rounded-lg text-green-600"><Icons.TrendUp /></span>
+              </div>
+              <p className="text-3xl font-bold text-gray-900">{stats.active}</p>
+            </div>
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-500">Total budget</span>
+                <span className="p-2 bg-purple-50 rounded-lg text-purple-600"><Icons.DollarSign /></span>
+              </div>
+              <p className="text-3xl font-bold text-gray-900">{fmtSEK(stats.totalBudget)}</p>
+            </div>
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-500">Plattformar</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{background:'#0668E1'}}/><span className="text-sm font-semibold">{stats.metaCount} Meta</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{background:'#010101'}}/><span className="text-sm font-semibold">{stats.tiktokCount} TikTok</span></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Charts Row */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <h3 className="text-sm font-semibold text-gray-700 mb-4">Status fördelning</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={stats.byStatus} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({name, value}) => `${name} (${value})`}>
+                    {stats.byStatus.map((entry, i) => <Cell key={i} fill={STATUS_COLORS[entry.name]?.hex || '#ccc'} />)}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <h3 className="text-sm font-semibold text-gray-700 mb-4">Budget per klient</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={clientSummary}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{fontSize: 11}} />
+                  <YAxis tick={{fontSize: 11}} />
+                  <Tooltip formatter={(v) => fmtSEK(v)} />
+                  <Bar dataKey="budget" fill="#6366f1" radius={[4,4,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Client Summary Table */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-700">Översikt per klient</h3>
+            </div>
+            <table className="w-full">
+              <thead><tr className="text-xs text-gray-500 border-b border-gray-100">
+                <th className="text-left px-5 py-3 font-medium">Klient</th>
+                <th className="text-center px-3 py-3 font-medium">Annonser</th>
+                <th className="text-center px-3 py-3 font-medium">Aktiva</th>
+                <th className="text-right px-3 py-3 font-medium">Budget</th>
+                <th className="text-center px-3 py-3 font-medium">Meta</th>
+                <th className="text-center px-3 py-3 font-medium">TikTok</th>
+              </tr></thead>
+              <tbody>
+                {clientSummary.map((c, i) => (
+                  <tr key={c.name} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition" onClick={() => { setSelectedClient(c.name); setPage('clients'); }}>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{background: CLIENT_COLORS[i % CLIENT_COLORS.length]}} />
+                        <span className="text-sm font-medium text-gray-900">{c.name}</span>
+                      </div>
+                    </td>
+                    <td className="text-center px-3 py-3 text-sm text-gray-600">{c.total}</td>
+                    <td className="text-center px-3 py-3 text-sm text-green-600 font-medium">{c.active}</td>
+                    <td className="text-right px-3 py-3 text-sm font-medium text-gray-900">{fmtSEK(c.budget)}</td>
+                    <td className="text-center px-3 py-3 text-sm text-gray-600">{c.meta}</td>
+                    <td className="text-center px-3 py-3 text-sm text-gray-600">{c.tiktok}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── All Ads View ───
+    function AllAdsView() {
+      const { filteredAds, dispatch, setModalAd } = useApp();
+      const [view, setView] = useState('table');
+      const [search, setSearch] = useState('');
+      const [sortKey, setSortKey] = useState('scheduledDate');
+      const [sortDir, setSortDir] = useState('asc');
+      const [statusFilter, setStatusFilter] = useState('all');
+      const [platformFilter, setPlatformFilter] = useState('all');
+      const [dragId, setDragId] = useState(null);
+
+      const handleSort = (key) => {
+        if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        else { setSortKey(key); setSortDir('asc'); }
+      };
+
+      const displayed = useMemo(() => {
+        let result = [...filteredAds];
+        if (search) {
+          const q = search.toLowerCase();
+          result = result.filter(a => a.adName.toLowerCase().includes(q) || a.notes.toLowerCase().includes(q) || a.clientName.toLowerCase().includes(q));
+        }
+        if (statusFilter !== 'all') result = result.filter(a => a.status === statusFilter);
+        if (platformFilter !== 'all') result = result.filter(a => a.platform === platformFilter);
+        result.sort((a, b) => {
+          let va = a[sortKey], vb = b[sortKey];
+          if (sortKey === 'budgetAmount') { va = Number(va) || 0; vb = Number(vb) || 0; }
+          if (va < vb) return sortDir === 'asc' ? -1 : 1;
+          if (va > vb) return sortDir === 'asc' ? 1 : -1;
+          return 0;
+        });
+        return result;
+      }, [filteredAds, search, sortKey, sortDir, statusFilter, platformFilter]);
+
+      const SortHeader = ({ label, field }) => (
+        <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-gray-900 select-none" onClick={() => handleSort(field)}>
+          <span className="inline-flex items-center gap-1">{label}{sortKey === field && <span className="text-blue-500">{sortDir === 'asc' ? '↑' : '↓'}</span>}</span>
+        </th>
+      );
+
+      // Kanban drag handlers
+      const handleDragStart = (e, id) => { setDragId(id); e.dataTransfer.effectAllowed = 'move'; };
+      const handleDragOver = (e) => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); };
+      const handleDragLeave = (e) => { e.currentTarget.classList.remove('drag-over'); };
+      const handleDrop = (e, status) => {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        if (dragId) dispatch({ type: 'UPDATE_STATUS', payload: { id: dragId, status } });
+        setDragId(null);
+      };
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-gray-900">Alla annonser</h2>
+            <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+              <button onClick={() => setView('table')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${view === 'table' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}><Icons.Table /> Tabell</button>
+              <button onClick={() => setView('kanban')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${view === 'kanban' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}><Icons.Kanban /> Kanban</button>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-3 bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+            <div className="relative flex-1 min-w-[200px]">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icons.Search /></span>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Sök annons..." className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+            </div>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+              <option value="all">Alla status</option>
+              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+              <option value="all">Alla plattformar</option>
+              {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <span className="text-sm text-gray-500">{displayed.length} annonser</span>
+          </div>
+
+          {view === 'table' ? (
+            /* TABLE VIEW */
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {displayed.length === 0 ? (
+                <div className="p-12 text-center text-gray-400">
+                  <p className="text-lg font-medium">Inga annonser hittades</p>
+                  <p className="text-sm mt-1">Justera filter eller skapa en ny annons</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead><tr className="text-xs text-gray-500 border-b border-gray-200 bg-gray-50">
+                      <SortHeader label="Klient" field="clientName" />
+                      <SortHeader label="Annons" field="adName" />
+                      <SortHeader label="Plattform" field="platform" />
+                      <th className="text-left px-4 py-3 font-medium text-xs text-gray-500">Status</th>
+                      <SortHeader label="Startdatum" field="scheduledDate" />
+                      <SortHeader label="Slutdatum" field="endDate" />
+                      <SortHeader label="Budget" field="budgetAmount" />
+                      <th className="text-left px-4 py-3 font-medium text-xs text-gray-500">Format</th>
+                    </tr></thead>
+                    <tbody>
+                      {displayed.map(ad => (
+                        <tr key={ad.id} className="border-b border-gray-50 hover:bg-blue-50/30 cursor-pointer transition" onClick={() => setModalAd(ad)}>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{ad.clientName}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{ad.adName}</td>
+                          <td className="px-4 py-3"><PlatformBadge platform={ad.platform} /></td>
+                          <td className="px-4 py-3"><StatusBadge status={ad.status} /></td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{fmtDateSv(ad.scheduledDate)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{fmtDateSv(ad.endDate)}</td>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{fmtSEK(ad.budgetAmount)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{ad.creativeType}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* KANBAN VIEW */
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {STATUSES.map(status => {
+                const cards = displayed.filter(a => a.status === status);
+                const sc = STATUS_COLORS[status];
+                return (
+                  <div key={status} className="flex-shrink-0 w-64 bg-gray-50 rounded-xl border border-gray-200"
+                    onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={e => handleDrop(e, status)}>
+                    <div className="p-3 border-b border-gray-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${sc.dot}`} />
+                        <span className="text-sm font-semibold text-gray-700">{status}</span>
+                      </div>
+                      <span className="text-xs text-gray-400 bg-gray-200 px-2 py-0.5 rounded-full">{cards.length}</span>
+                    </div>
+                    <div className="p-2 space-y-2 min-h-[100px]">
+                      {cards.map(ad => (
+                        <div key={ad.id} className="kanban-card bg-white rounded-lg p-3 border border-gray-200 shadow-sm hover:shadow-md transition cursor-pointer"
+                          draggable onDragStart={e => handleDragStart(e, ad.id)} onClick={() => setModalAd(ad)}>
+                          <p className="text-sm font-medium text-gray-900 mb-1">{ad.adName}</p>
+                          <p className="text-xs text-gray-500 mb-2">{ad.clientName}</p>
+                          <div className="flex items-center justify-between">
+                            <PlatformBadge platform={ad.platform} />
+                            <span className="text-xs font-medium text-gray-600">{fmtSEK(ad.budgetAmount)}</span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-2">{fmtDateSv(ad.scheduledDate)}</p>
+                        </div>
+                      ))}
+                      {cards.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Inga annonser</p>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── Calendar View ───
+    function CalendarView() {
+      const { filteredAds, setModalAd, clients } = useApp();
+      const [year, setYear] = useState(2026);
+      const [month, setMonth] = useState(2); // March (0-indexed)
+
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const firstDay = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
+
+      const adsByDay = useMemo(() => {
+        const map = {};
+        filteredAds.forEach(ad => {
+          const d = new Date(ad.scheduledDate);
+          if (d.getFullYear() === year && d.getMonth() === month) {
+            const day = d.getDate();
+            if (!map[day]) map[day] = [];
+            map[day].push(ad);
+          }
+        });
+        return map;
+      }, [filteredAds, year, month]);
+
+      const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y - 1); } else setMonth(m => m - 1); };
+      const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y + 1); } else setMonth(m => m + 1); };
+
+      const clientColorMap = useMemo(() => {
+        const m = {};
+        clients.forEach((c, i) => m[c] = CLIENT_COLORS[i % CLIENT_COLORS.length]);
+        return m;
+      }, [clients]);
+
+      const cells = [];
+      for (let i = 0; i < firstDay; i++) cells.push(<div key={`e${i}`} className="bg-gray-50/50 rounded-lg min-h-[100px]" />);
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dayAds = adsByDay[d] || [];
+        const isToday = d === new Date().getDate() && month === new Date().getMonth() && year === new Date().getFullYear();
+        cells.push(
+          <div key={d} className={`bg-white rounded-lg border ${isToday ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-100'} min-h-[100px] p-1.5`}>
+            <span className={`text-xs font-medium ${isToday ? 'text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded' : 'text-gray-500'}`}>{d}</span>
+            <div className="mt-1 space-y-0.5">
+              {dayAds.slice(0, 3).map(ad => (
+                <div key={ad.id} onClick={() => setModalAd(ad)} className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer truncate text-white font-medium hover:opacity-80 transition" style={{background: clientColorMap[ad.clientName] || '#6366f1'}}>
+                  {ad.adName}
+                </div>
+              ))}
+              {dayAds.length > 3 && <span className="text-[10px] text-gray-400">+{dayAds.length - 3} till</span>}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-gray-900">Kalender</h2>
+            <div className="flex items-center gap-3">
+              <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-lg transition"><Icons.ChevLeft /></button>
+              <span className="text-lg font-semibold text-gray-900 min-w-[160px] text-center">{MONTHS_SV[month].charAt(0).toUpperCase() + MONTHS_SV[month].slice(1)} {year}</span>
+              <button onClick={nextMonth} className="p-2 hover:bg-gray-100 rounded-lg transition"><Icons.ChevRight /></button>
+            </div>
+          </div>
+
+          {/* Legend */}
+          <div className="flex flex-wrap gap-3 bg-white rounded-xl p-3 border border-gray-200 shadow-sm">
+            {clients.map((c, i) => (
+              <div key={c} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{background: CLIENT_COLORS[i % CLIENT_COLORS.length]}} /><span className="text-xs text-gray-600">{c}</span></div>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <div className="grid grid-cols-7 gap-1 mb-1">
+              {DAYS_SV.map(d => <div key={d} className="text-center text-xs font-medium text-gray-400 py-1">{d}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-1">{cells}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Clients View ───
+    function ClientsView() {
+      const { ads, filteredAds, clients, selectedClient, setSelectedClient, setModalAd, setClientFilter, setPage } = useApp();
+
+      const clientColorMap = useMemo(() => {
+        const m = {};
+        clients.forEach((c, i) => m[c] = CLIENT_COLORS[i % CLIENT_COLORS.length]);
+        return m;
+      }, [clients]);
+
+      // Client detail
+      if (selectedClient) {
+        const clientAds = ads.filter(a => a.clientName === selectedClient);
+        const totalBudget = clientAds.reduce((s, a) => s + (a.budgetAmount || 0), 0);
+        const activeCount = clientAds.filter(a => a.status === 'Active').length;
+        const byStatus = STATUSES.map(s => ({ name: s, value: clientAds.filter(a => a.status === s).length })).filter(s => s.value > 0);
+        const byMonth = {};
+        clientAds.forEach(a => {
+          const d = new Date(a.scheduledDate);
+          const key = `${MONTHS_SV[d.getMonth()]} ${d.getFullYear()}`;
+          byMonth[key] = (byMonth[key] || 0) + (a.budgetAmount || 0);
+        });
+        const monthlyData = Object.entries(byMonth).map(([name, budget]) => ({ name, budget }));
+        const upcoming = clientAds.filter(a => {
+          const d = new Date(a.scheduledDate);
+          const now = new Date();
+          const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+          return d >= now && d <= in30;
+        });
+
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center gap-3">
+              <button onClick={() => setSelectedClient(null)} className="p-2 hover:bg-gray-100 rounded-lg transition"><Icons.ArrowBack /></button>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full" style={{background: clientColorMap[selectedClient]}} />
+                  {selectedClient}
+                </h2>
+                <p className="text-sm text-gray-500">{clientAds.length} annonser · {fmtSEK(totalBudget)} total budget</p>
+              </div>
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+                <p className="text-sm text-gray-500 mb-1">Totalt annonser</p>
+                <p className="text-2xl font-bold text-gray-900">{clientAds.length}</p>
+              </div>
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+                <p className="text-sm text-gray-500 mb-1">Aktiva</p>
+                <p className="text-2xl font-bold text-green-600">{activeCount}</p>
+              </div>
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+                <p className="text-sm text-gray-500 mb-1">Total budget</p>
+                <p className="text-2xl font-bold text-gray-900">{fmtSEK(totalBudget)}</p>
+              </div>
+            </div>
+
+            {/* Charts */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+                <h3 className="text-sm font-semibold text-gray-700 mb-4">Budget per månad</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={monthlyData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{fontSize: 11}} />
+                    <YAxis tick={{fontSize: 11}} />
+                    <Tooltip formatter={(v) => fmtSEK(v)} />
+                    <Bar dataKey="budget" fill={clientColorMap[selectedClient]} radius={[4,4,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+                <h3 className="text-sm font-semibold text-gray-700 mb-4">Status fördelning</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={byStatus} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({name, value}) => `${name} (${value})`}>
+                      {byStatus.map((entry, i) => <Cell key={i} fill={STATUS_COLORS[entry.name]?.hex || '#ccc'} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Upcoming */}
+            {upcoming.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-gray-100"><h3 className="text-sm font-semibold text-gray-700">Kommande annonser (30 dagar)</h3></div>
+                <div className="divide-y divide-gray-50">
+                  {upcoming.map(ad => (
+                    <div key={ad.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-50 cursor-pointer transition" onClick={() => setModalAd(ad)}>
+                      <div className="flex items-center gap-3">
+                        <PlatformBadge platform={ad.platform} />
+                        <span className="text-sm font-medium text-gray-900">{ad.adName}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <StatusBadge status={ad.status} />
+                        <span className="text-sm text-gray-500">{fmtDateSv(ad.scheduledDate)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* All ads table */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100"><h3 className="text-sm font-semibold text-gray-700">Alla annonser</h3></div>
+              <table className="w-full">
+                <thead><tr className="text-xs text-gray-500 border-b border-gray-200 bg-gray-50">
+                  <th className="text-left px-5 py-3 font-medium">Annons</th>
+                  <th className="text-left px-3 py-3 font-medium">Plattform</th>
+                  <th className="text-left px-3 py-3 font-medium">Status</th>
+                  <th className="text-left px-3 py-3 font-medium">Datum</th>
+                  <th className="text-right px-5 py-3 font-medium">Budget</th>
+                </tr></thead>
+                <tbody>
+                  {clientAds.map(ad => (
+                    <tr key={ad.id} className="border-b border-gray-50 hover:bg-blue-50/30 cursor-pointer transition" onClick={() => setModalAd(ad)}>
+                      <td className="px-5 py-3 text-sm font-medium text-gray-900">{ad.adName}</td>
+                      <td className="px-3 py-3"><PlatformBadge platform={ad.platform} /></td>
+                      <td className="px-3 py-3"><StatusBadge status={ad.status} /></td>
+                      <td className="px-3 py-3 text-sm text-gray-600">{fmtDateSv(ad.scheduledDate)}</td>
+                      <td className="px-5 py-3 text-sm text-right font-medium text-gray-900">{fmtSEK(ad.budgetAmount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
+      // Client grid
+      const clientCards = clients.map((c, i) => {
+        const cAds = ads.filter(a => a.clientName === c);
+        return {
+          name: c,
+          total: cAds.length,
+          active: cAds.filter(a => a.status === 'Active').length,
+          budget: cAds.reduce((s, a) => s + (a.budgetAmount || 0), 0),
+          meta: cAds.filter(a => a.platform === 'Meta').length,
+          tiktok: cAds.filter(a => a.platform === 'TikTok').length,
+          color: CLIENT_COLORS[i % CLIENT_COLORS.length],
+        };
+      });
+
+      return (
+        <div className="space-y-6">
+          <h2 className="text-2xl font-bold text-gray-900">Klienter</h2>
+          {clientCards.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+              <p className="text-lg font-medium">Inga klienter ännu</p>
+              <p className="text-sm mt-1">Skapa en annons för att lägga till en klient</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              {clientCards.map(c => (
+                <div key={c.name} onClick={() => setSelectedClient(c.name)} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md hover:border-gray-300 cursor-pointer transition">
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="w-4 h-4 rounded-full" style={{background: c.color}} />
+                    <h3 className="text-lg font-semibold text-gray-900">{c.name}</h3>
+                  </div>
+                  <div className="grid grid-cols-4 gap-3">
+                    <div>
+                      <p className="text-xs text-gray-500">Annonser</p>
+                      <p className="text-xl font-bold text-gray-900">{c.total}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Aktiva</p>
+                      <p className="text-xl font-bold text-green-600">{c.active}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Budget</p>
+                      <p className="text-lg font-bold text-gray-900">{fmtSEK(c.budget)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Plattformar</p>
+                      <div className="flex gap-1 mt-1">
+                        {c.meta > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded text-white font-medium" style={{background:'#0668E1'}}>{c.meta}</span>}
+                        {c.tiktok > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded text-white font-medium" style={{background:'#010101'}}>{c.tiktok}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── Main App ───
+    function App() {
+      const { page } = useApp();
+
+      // Keyboard shortcuts
+      useEffect(() => {
+        const handler = (e) => {
+          if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+          if (e.key === 'Escape') {
+            // Close modal handled inside modal
+          }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+      }, []);
+
+      return (
+        <div className="flex min-h-screen bg-gray-50">
+          <Sidebar />
+          <main className="ml-60 flex-1 p-8">
+            {page === 'dashboard' && <Dashboard />}
+            {page === 'ads' && <AllAdsView />}
+            {page === 'calendar' && <CalendarView />}
+            {page === 'clients' && <ClientsView />}
+          </main>
+          <AdModal />
+        </div>
+      );
+    }
+
+    // ─── Root Render ───
+    function Root() {
+      return <AppProvider><App /></AppProvider>;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
+  </script>
+</body>
+</html>
