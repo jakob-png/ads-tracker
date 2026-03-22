@@ -26,10 +26,10 @@
       }
     }
   </script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body, #root { height: 100%; }
@@ -63,9 +63,9 @@
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel" data-type="module">
+  <script type="text/babel">
     const { useState, useEffect, useReducer, createContext, useContext, useRef, useMemo, useCallback } = React;
-    const { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip: RTooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, AreaChart, Area } = Recharts;
+    const { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip: RTooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, AreaChart, Area } = Recharts || {};
 
     // ─── Helpers ───
     const uid = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -886,7 +886,26 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<Provider><App /></Provider>);
+    // Error Boundary
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { error: null }; }
+      static getDerivedStateFromError(error) { return { error }; }
+      render() {
+        if (this.state.error) return React.createElement('div', {style:{padding:'40px',fontFamily:'system-ui'}},
+          React.createElement('h1', {style:{color:'red',marginBottom:'10px'}}, 'App Error'),
+          React.createElement('pre', {style:{background:'#f5f5f5',padding:'20px',borderRadius:'8px',whiteSpace:'pre-wrap'}}, this.state.error.toString())
+        );
+        return this.props.children;
+      }
+    }
+
+    try {
+      ReactDOM.createRoot(document.getElementById('root')).render(
+        React.createElement(ErrorBoundary, null, React.createElement(Provider, null, React.createElement(App)))
+      );
+    } catch(e) {
+      document.getElementById('root').innerHTML = '<div style="padding:40px;font-family:system-ui"><h1 style="color:red">Render Error</h1><pre style="background:#f5f5f5;padding:20px;border-radius:8px">' + e.message + '</pre></div>';
+    }
   </script>
 </body>
 </html>
