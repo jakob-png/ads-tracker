@@ -115,6 +115,10 @@
       Clock: ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
       Bell: ({s=18}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
       Sparkle: ({s=20}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3z"/></svg>,
+      History: ({s=20}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>,
+      AlertTri: ({s=20}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+      Edit: ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+      ArrowRight: ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
     };
 
     // ─── Seed Data ───
@@ -149,13 +153,64 @@
     const loadAds = () => { try { const r = localStorage.getItem(STORAGE_KEY); if (r) { const p = JSON.parse(r); if (p.length > 0) return p; } } catch(e) {} const s = createSeedData(); localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); return s; };
     const saveAds = (ads) => localStorage.setItem(STORAGE_KEY, JSON.stringify(ads));
 
+    // ─── Activity Log ───
+    const ACTIVITY_KEY = 'adbase_activity_v1';
+    const loadActivity = () => { try { const r = localStorage.getItem(ACTIVITY_KEY); return r ? JSON.parse(r) : []; } catch(e) { return []; } };
+    const saveActivity = (log) => localStorage.setItem(ACTIVITY_KEY, JSON.stringify(log));
+    const logActivity = (ad, type, details = {}) => {
+      const log = loadActivity();
+      log.unshift({ id: uid(), adId: ad.id, adName: ad.adName || ad.adName, clientName: ad.clientName, type, timestamp: new Date().toISOString(), details });
+      if (log.length > 500) log.length = 500;
+      saveActivity(log);
+    };
+    const initActivity = () => {
+      if (localStorage.getItem(ACTIVITY_KEY)) return;
+      const ads = loadAds();
+      const log = ads.map(ad => ({ id: uid(), adId: ad.id, adName: ad.adName, clientName: ad.clientName, type: 'created', timestamp: ad.createdAt, details: {} }));
+      saveActivity(log);
+    };
+    const isAdOverdue = (ad) => {
+      if (ad.status !== 'Draft' && ad.status !== 'Scheduled') return false;
+      const today = new Date().toISOString().split('T')[0];
+      return ad.scheduledDate <= today;
+    };
+
     function adsReducer(state, action) {
       let next;
       switch(action.type) {
-        case 'ADD': next = [...state, { ...action.payload, id: uid(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]; break;
-        case 'UPDATE': next = state.map(a => a.id === action.payload.id ? { ...a, ...action.payload, updatedAt: new Date().toISOString() } : a); break;
-        case 'DELETE': next = state.filter(a => a.id !== action.payload); break;
-        case 'UPDATE_STATUS': next = state.map(a => a.id === action.payload.id ? { ...a, status: action.payload.status, updatedAt: new Date().toISOString() } : a); break;
+        case 'ADD': {
+          const newAd = { ...action.payload, id: uid(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+          next = [...state, newAd];
+          logActivity(newAd, 'created');
+          break;
+        }
+        case 'UPDATE': {
+          const oldAd = state.find(a => a.id === action.payload.id);
+          next = state.map(a => a.id === action.payload.id ? { ...a, ...action.payload, updatedAt: new Date().toISOString() } : a);
+          if (oldAd) {
+            const changedFields = Object.keys(action.payload).filter(k => k !== 'id' && k !== 'updatedAt' && oldAd[k] !== action.payload[k]);
+            if (oldAd.status !== action.payload.status && action.payload.status) {
+              logActivity(oldAd, 'status_changed', { from: oldAd.status, to: action.payload.status });
+            }
+            const otherFields = changedFields.filter(k => k !== 'status');
+            if (otherFields.length > 0) {
+              logActivity(oldAd, 'updated', { fields: otherFields });
+            }
+          }
+          break;
+        }
+        case 'DELETE': {
+          const delAd = state.find(a => a.id === action.payload);
+          if (delAd) logActivity(delAd, 'deleted');
+          next = state.filter(a => a.id !== action.payload);
+          break;
+        }
+        case 'UPDATE_STATUS': {
+          const oldAd = state.find(a => a.id === action.payload.id);
+          next = state.map(a => a.id === action.payload.id ? { ...a, status: action.payload.status, updatedAt: new Date().toISOString() } : a);
+          if (oldAd) logActivity(oldAd, 'status_changed', { from: oldAd.status, to: action.payload.status });
+          break;
+        }
         default: return state;
       }
       saveAds(next);
@@ -171,6 +226,10 @@
       const [modalAd, setModalAd] = useState(null);
       const [selectedClient, setSelectedClient] = useState(null);
       const [toast, setToast] = useState(null);
+      const [activityVersion, setActivityVersion] = useState(0);
+
+      useEffect(() => { initActivity(); }, []);
+      const bumpActivity = useCallback(() => setActivityVersion(v => v + 1), []);
 
       const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); }, []);
       const clients = useMemo(() => [...new Set(ads.map(a => a.clientName))].sort(), [ads]);
@@ -181,7 +240,15 @@
         return r;
       }, [ads, clientFilter, dateRange]);
 
-      return <Ctx.Provider value={{ ads, dispatch, page, setPage, clientFilter, setClientFilter, dateRange, setDateRange, modalAd, setModalAd, clients, filteredAds, selectedClient, setSelectedClient, toast, showToast }}>{children}</Ctx.Provider>;
+      const overdue = useMemo(() => ads.filter(a => isAdOverdue(a)), [ads]);
+      const comingSoon = useMemo(() => {
+        const today = new Date().toISOString().split('T')[0];
+        return ads.filter(a => (a.status === 'Draft' || a.status === 'Scheduled') && a.scheduledDate > today)
+          .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate));
+      }, [ads]);
+      const activity = useMemo(() => loadActivity(), [ads, activityVersion]);
+
+      return <Ctx.Provider value={{ ads, dispatch, page, setPage, clientFilter, setClientFilter, dateRange, setDateRange, modalAd, setModalAd, clients, filteredAds, selectedClient, setSelectedClient, toast, showToast, overdue, comingSoon, activity, bumpActivity }}>{children}</Ctx.Provider>;
     }
     const useApp = () => useContext(Ctx);
 
@@ -192,8 +259,11 @@
       return <span className={`inline-flex items-center gap-1 rounded-md font-semibold text-white ${cls}`} style={{background:'#1a1a2e'}}>TikTok</span>;
     }
 
-    function StatusBadge({ status, onClick }) {
+    function StatusBadge({ status, onClick, overdue }) {
       const c = STATUS_COLORS[status];
+      if (overdue) {
+        return <span onClick={onClick} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide bg-amber-50 text-amber-700 border border-amber-200 ${onClick ? 'cursor-pointer hover:opacity-80 transition' : ''}`}><span className="w-1.5 h-1.5 rounded-full bg-amber-500 pulse-dot"/><I.AlertTri s={11} />{status}</span>;
+      }
       return <span onClick={onClick} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide ${c.bg} ${c.text} ${onClick ? 'cursor-pointer hover:opacity-80 transition' : ''}`}><span className={`w-1.5 h-1.5 rounded-full ${c.dot} ${status === 'Active' ? 'pulse-dot' : ''}`}/>{status}</span>;
     }
 
@@ -301,12 +371,13 @@
 
     // ─── Sidebar ───
     function Sidebar() {
-      const { page, setPage, clientFilter, setClientFilter, clients, setModalAd, setSelectedClient } = useApp();
+      const { page, setPage, clientFilter, setClientFilter, clients, setModalAd, setSelectedClient, overdue } = useApp();
       const nav = [
         { id: 'dashboard', label: 'Dashboard', icon: I.Dashboard },
         { id: 'ads', label: 'Alla annonser', icon: I.Ads },
         { id: 'calendar', label: 'Kalender', icon: I.Calendar },
         { id: 'clients', label: 'Klienter', icon: I.Clients },
+        { id: 'activity', label: 'Aktivitet', icon: I.History },
       ];
       return (
         <aside className="w-[250px] gradient-dark text-white flex flex-col h-screen fixed left-0 top-0 z-40">
@@ -337,6 +408,7 @@
               <button key={item.id} onClick={() => { setPage(item.id); setSelectedClient(null); }}
                 className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium mb-1 transition ${page === item.id ? 'active bg-white/10 text-white' : 'text-indigo-200/60 hover:bg-white/5 hover:text-white'}`}>
                 <item.icon s={19} />{item.label}
+                {item.id === 'dashboard' && overdue.length > 0 && <span className="ml-auto w-5 h-5 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{overdue.length}</span>}
               </button>
             ))}
           </nav>
@@ -367,7 +439,7 @@
 
     // ─── Dashboard ───
     function Dashboard() {
-      const { filteredAds, ads, dateRange, setDateRange, clients, setPage, setSelectedClient, clientFilter } = useApp();
+      const { filteredAds, ads, dateRange, setDateRange, clients, setPage, setSelectedClient, clientFilter, overdue, comingSoon, setModalAd, activity } = useApp();
 
       const stats = useMemo(() => {
         const active = filteredAds.filter(a => a.status === 'Active').length;
@@ -404,6 +476,31 @@
 
       return (
         <div className="space-y-6 fade-in">
+          {/* Overdue Alert */}
+          {overdue.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 fade-in">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 flex-shrink-0"><I.AlertTri s={20} /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-bold text-amber-800">{overdue.length} annons{overdue.length > 1 ? 'er' : ''} borde ha publicerats</h3>
+                    <button onClick={() => setPage('ads')} className="text-[11px] font-semibold text-amber-600 hover:text-amber-800 flex items-center gap-1 transition">Visa alla <I.ArrowRight s={12} /></button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {overdue.slice(0, 3).map(ad => (
+                      <div key={ad.id} onClick={() => setModalAd(ad)} className="flex items-center gap-2 text-[12px] text-amber-700 cursor-pointer hover:text-amber-900 transition">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                        <span className="font-semibold">{ad.adName}</span>
+                        <span className="text-amber-500">— {ad.clientName} — planerad {fmtDateSv(ad.scheduledDate)}</span>
+                      </div>
+                    ))}
+                    {overdue.length > 3 && <p className="text-[11px] text-amber-500 ml-4">+{overdue.length - 3} till...</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Welcome Header */}
           <div className="flex items-end justify-between">
             <div>
@@ -483,6 +580,40 @@
             </div>
           </div>
 
+          {/* Kommande (Coming Soon) */}
+          {comingSoon.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-brand-500"><I.Clock s={16} /></div>
+                  <h3 className="text-sm font-bold text-gray-900">Kommande annonser</h3>
+                  <span className="text-[11px] bg-brand-50 text-brand-600 px-2 py-0.5 rounded-full font-semibold">{comingSoon.length}</span>
+                </div>
+                <button onClick={() => setPage('ads')} className="text-[11px] font-semibold text-brand-500 hover:text-brand-700 flex items-center gap-1 transition">Visa alla <I.ArrowRight s={12} /></button>
+              </div>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {comingSoon.slice(0, 6).map(ad => {
+                  const daysUntil = Math.ceil((new Date(ad.scheduledDate) - new Date()) / (1000 * 60 * 60 * 24));
+                  const countdownText = daysUntil === 1 ? 'imorgon' : daysUntil <= 7 ? `om ${daysUntil} dagar` : daysUntil <= 30 ? `om ${Math.ceil(daysUntil / 7)} veckor` : `om ${Math.ceil(daysUntil / 30)} mån`;
+                  return (
+                    <div key={ad.id} onClick={() => setModalAd(ad)} className="flex-shrink-0 w-[200px] bg-gray-50 rounded-xl p-3.5 border border-gray-100 cursor-pointer hover:border-brand-200 hover:bg-brand-50/30 transition card-hover">
+                      <p className="text-[12px] font-semibold text-gray-900 truncate mb-1">{ad.adName}</p>
+                      <p className="text-[11px] text-gray-400 mb-2">{ad.clientName}</p>
+                      <div className="flex items-center justify-between">
+                        <PlatformBadge platform={ad.platform} />
+                        <span className="text-[10px] font-semibold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full">{countdownText}</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-[10px] text-gray-400 flex items-center gap-1"><I.Clock s={10} />{fmtDateSv(ad.scheduledDate)}</span>
+                        <span className="text-[10px] font-bold text-gray-600">{fmtSEK(ad.budgetAmount)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Charts + Activity */}
           <div className="grid grid-cols-3 gap-4">
             {/* Budget Chart */}
@@ -505,21 +636,31 @@
 
             {/* Recent Activity */}
             <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
-              <h3 className="text-sm font-bold text-gray-900 mb-4">Senaste aktivitet</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-gray-900">Senaste aktivitet</h3>
+                <button onClick={() => setPage('activity')} className="text-[11px] font-semibold text-brand-500 hover:text-brand-700 transition">Visa alla</button>
+              </div>
               <div className="space-y-3">
-                {recentAds.map(ad => (
-                  <div key={ad.id} className="flex items-start gap-3 group">
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5" style={{background: STATUS_COLORS[ad.status].light}}>
-                      <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[ad.status].dot}`}/>
+                {activity.slice(0, 6).map(entry => {
+                  const typeConfig = { created: { icon: <I.Plus s={12} />, bg: 'bg-emerald-50', color: 'text-emerald-600', label: 'Skapad' }, updated: { icon: <I.Edit s={12} />, bg: 'bg-blue-50', color: 'text-blue-600', label: 'Uppdaterad' }, status_changed: { icon: <I.ArrowRight s={12} />, bg: 'bg-indigo-50', color: 'text-indigo-600', label: 'Status' }, deleted: { icon: <I.Trash s={12} />, bg: 'bg-red-50', color: 'text-red-500', label: 'Borttagen' } };
+                  const tc = typeConfig[entry.type] || typeConfig.updated;
+                  const time = new Date(entry.timestamp);
+                  const timeStr = `${time.getHours().toString().padStart(2,'0')}:${time.getMinutes().toString().padStart(2,'0')}`;
+                  return (
+                    <div key={entry.id} className="flex items-start gap-3">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${tc.bg} ${tc.color}`}>{tc.icon}</div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] font-semibold text-gray-800 truncate">{entry.adName}</p>
+                        <p className="text-[11px] text-gray-400">
+                          {entry.clientName} · {tc.label}
+                          {entry.type === 'status_changed' && entry.details.from && ` ${entry.details.from} → ${entry.details.to}`}
+                        </p>
+                      </div>
+                      <span className="text-[10px] text-gray-300 flex-shrink-0">{timeStr}</span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[12px] font-semibold text-gray-800 truncate">{ad.adName}</p>
-                      <p className="text-[11px] text-gray-400">{ad.clientName} · {ad.platform}</p>
-                    </div>
-                    <StatusBadge status={ad.status} />
-                  </div>
-                ))}
-                {recentAds.length === 0 && <p className="text-sm text-gray-300 text-center py-6">Inga annonser</p>}
+                  );
+                })}
+                {activity.length === 0 && <p className="text-sm text-gray-300 text-center py-6">Ingen aktivitet ännu</p>}
               </div>
             </div>
           </div>
@@ -632,11 +773,11 @@
                       <th className="text-left px-4 py-3.5 font-semibold text-[11px] text-gray-400 uppercase tracking-wider">Format</th>
                     </tr></thead>
                     <tbody>{displayed.map(ad => (
-                      <tr key={ad.id} className="border-b border-gray-50 hover:bg-brand-50/30 cursor-pointer transition group" onClick={() => setModalAd(ad)}>
+                      <tr key={ad.id} className={`border-b border-gray-50 hover:bg-brand-50/30 cursor-pointer transition group ${isAdOverdue(ad) ? 'border-l-[3px] border-l-amber-400' : ''}`} onClick={() => setModalAd(ad)}>
                         <td className="px-4 py-3.5 text-[13px] font-semibold text-gray-900">{ad.clientName}</td>
                         <td className="px-4 py-3.5"><span className="text-[13px] text-gray-700">{ad.adName}</span></td>
                         <td className="px-4 py-3.5"><PlatformBadge platform={ad.platform} /></td>
-                        <td className="px-4 py-3.5"><StatusBadge status={ad.status} /></td>
+                        <td className="px-4 py-3.5"><StatusBadge status={ad.status} overdue={isAdOverdue(ad)} /></td>
                         <td className="px-4 py-3.5 text-[13px] text-gray-500">{fmtDateSv(ad.scheduledDate)}</td>
                         <td className="px-4 py-3.5 text-[13px] text-gray-400">{fmtDateSv(ad.endDate)}</td>
                         <td className="px-4 py-3.5 text-[13px] font-bold text-gray-900 text-right">{fmtSEK(ad.budgetAmount)}</td>
@@ -663,9 +804,12 @@
                     </div>
                     <div className="p-2 space-y-2 min-h-[80px]">
                       {cards.map(ad => (
-                        <div key={ad.id} className="kanban-card bg-white rounded-xl p-3.5 border border-gray-100 shadow-sm hover:shadow-md transition card-hover"
+                        <div key={ad.id} className={`kanban-card bg-white rounded-xl p-3.5 border shadow-sm hover:shadow-md transition card-hover ${isAdOverdue(ad) ? 'border-amber-300 bg-amber-50/30' : 'border-gray-100'}`}
                           draggable onDragStart={e => { setDragId(ad.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => setModalAd(ad)}>
-                          <p className="text-[13px] font-semibold text-gray-900 mb-1">{ad.adName}</p>
+                          <div className="flex items-start justify-between mb-1">
+                            <p className="text-[13px] font-semibold text-gray-900 truncate flex-1">{ad.adName}</p>
+                            {isAdOverdue(ad) && <span className="ml-1 flex-shrink-0 text-amber-500"><I.AlertTri s={14} /></span>}
+                          </div>
                           <p className="text-[11px] text-gray-400 mb-2.5">{ad.clientName}</p>
                           <div className="flex items-center justify-between">
                             <PlatformBadge platform={ad.platform} />
@@ -867,6 +1011,109 @@
       );
     }
 
+    // ─── Activity View ───
+    function ActivityView() {
+      const { activity, ads, setModalAd, clients, clientFilter } = useApp();
+      const [typeFilter, setTypeFilter] = useState('all');
+
+      const filtered = useMemo(() => {
+        let r = activity;
+        if (clientFilter !== 'all') r = r.filter(e => e.clientName === clientFilter);
+        if (typeFilter !== 'all') r = r.filter(e => e.type === typeFilter);
+        return r;
+      }, [activity, clientFilter, typeFilter]);
+
+      const grouped = useMemo(() => {
+        const groups = {};
+        const today = new Date().toISOString().split('T')[0];
+        const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        filtered.forEach(entry => {
+          const day = entry.timestamp.split('T')[0];
+          const label = day === today ? 'Idag' : day === yesterday ? 'Igår' : fmtDateSv(day);
+          if (!groups[label]) groups[label] = [];
+          groups[label].push(entry);
+        });
+        return Object.entries(groups).slice(0, 20);
+      }, [filtered]);
+
+      const typeConfig = {
+        created: { icon: <I.Plus s={14} />, bg: 'bg-emerald-50', color: 'text-emerald-600', label: 'Skapad' },
+        updated: { icon: <I.Edit s={14} />, bg: 'bg-blue-50', color: 'text-blue-600', label: 'Uppdaterad' },
+        status_changed: { icon: <I.ArrowRight s={14} />, bg: 'bg-indigo-50', color: 'text-indigo-600', label: 'Status ändrad' },
+        deleted: { icon: <I.Trash s={14} />, bg: 'bg-red-50', color: 'text-red-500', label: 'Borttagen' },
+      };
+
+      return (
+        <div className="space-y-6 fade-in">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-[28px] font-bold text-gray-900 tracking-tight">Aktivitetslogg</h1>
+              <p className="text-sm text-gray-400 mt-1">Senaste ändringar i dina annonser</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-brand-500/20 outline-none text-gray-600 font-medium">
+                <option value="all">Alla typer</option>
+                <option value="created">Skapade</option>
+                <option value="updated">Uppdaterade</option>
+                <option value="status_changed">Statusändringar</option>
+                <option value="deleted">Borttagna</option>
+              </select>
+            </div>
+          </div>
+
+          {grouped.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-16 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-4 text-gray-300"><I.History s={28} /></div>
+              <p className="text-base font-semibold text-gray-400">Ingen aktivitet ännu</p>
+              <p className="text-sm text-gray-300 mt-1">Aktiviteter loggas när du skapar, redigerar eller tar bort annonser</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {grouped.map(([dayLabel, entries]) => (
+                <div key={dayLabel}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-[12px] font-bold text-gray-400 uppercase tracking-wider">{dayLabel}</span>
+                    <div className="flex-1 h-px bg-gray-100" />
+                  </div>
+                  <div className="space-y-2">
+                    {entries.map(entry => {
+                      const tc = typeConfig[entry.type] || typeConfig.updated;
+                      const time = new Date(entry.timestamp);
+                      const timeStr = `${time.getHours().toString().padStart(2,'0')}:${time.getMinutes().toString().padStart(2,'0')}`;
+                      const adExists = ads.find(a => a.id === entry.adId);
+                      return (
+                        <div key={entry.id} onClick={() => adExists && entry.type !== 'deleted' && setModalAd(adExists)}
+                          className={`bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-4 shadow-sm ${adExists && entry.type !== 'deleted' ? 'cursor-pointer hover:border-brand-200 hover:bg-brand-50/20 transition card-hover' : ''}`}>
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tc.bg} ${tc.color}`}>{tc.icon}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] font-semibold text-gray-900 truncate">{entry.adName}</span>
+                              {entry.type === 'status_changed' && entry.details.from && (
+                                <span className="flex items-center gap-1 text-[11px]">
+                                  <span className="px-1.5 py-0.5 rounded-md font-semibold" style={{background: STATUS_COLORS[entry.details.from]?.light, color: STATUS_COLORS[entry.details.from]?.hex}}>{entry.details.from}</span>
+                                  <I.ArrowRight s={10} />
+                                  <span className="px-1.5 py-0.5 rounded-md font-semibold" style={{background: STATUS_COLORS[entry.details.to]?.light, color: STATUS_COLORS[entry.details.to]?.hex}}>{entry.details.to}</span>
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-0.5">
+                              {entry.clientName} · {tc.label}
+                              {entry.type === 'updated' && entry.details.fields && ` (${entry.details.fields.join(', ')})`}
+                            </p>
+                          </div>
+                          <span className="text-[11px] text-gray-300 flex-shrink-0 font-medium">{timeStr}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // ─── App ───
     function App() {
       const { page } = useApp();
@@ -879,6 +1126,7 @@
             {page === 'ads' && <AllAdsView />}
             {page === 'calendar' && <CalendarView />}
             {page === 'clients' && <ClientsView />}
+            {page === 'activity' && <ActivityView />}
           </main>
           <AdModal />
           <Toast />
